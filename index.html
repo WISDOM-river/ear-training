@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>音感ゲーム</title>
+
+<style>
+  body {
+    font-family: sans-serif;
+    background: #fff;
+    color: #000;
+    text-align: center;
+    padding: 20px;
+  }
+  button, select {
+    margin: 6px;
+    padding: 10px 14px;
+    font-size: 16px;
+    background: #fff;
+    border: 1px solid #000;
+    touch-action: manipulation;
+  }
+  button:active {
+    background: #000;
+    color: #fff;
+  }
+  .note-buttons button {
+    width: 60px;
+  }
+  #status {
+    margin-top: 12px;
+    font-weight: bold;
+  }
+  #resultList {
+    text-align: left;
+    max-width: 420px;
+    margin: 0 auto;
+  }
+
+  /* ===== Keyboard (C3–C5) ===== */
+  #keyboardWrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  #keyboard {
+    position: relative;
+    width: 900px;             /* 白鍵15本 × 60px */
+    height: 160px;
+    margin: 18px auto;        /* 中央寄せ */
+  }
+
+  /* border込みで幅計算がズレないようにする（重要） */
+  #keyboard button {
+    box-sizing: border-box;
+  }
+
+  .white-keys {
+    display: flex;
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1;
+  }
+  .white-keys button {
+    width: 60px;
+    height: 160px;
+    border: 1px solid #000;
+    background: #fff;
+    padding: 0;
+    margin: 0;
+  }
+  .white-keys button:active {
+    background: #ddd;
+    color: #000;
+  }
+
+  .black-keys {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 2;
+  }
+  .black-keys button {
+    position: absolute;
+    width: 40px;
+    height: 100px;
+    background: #000;
+    border: 1px solid #000;
+    padding: 0;
+    margin: 0;
+  }
+  .black-keys button:active {
+    background: #444;
+  }
+</style>
+</head>
+
+<body>
+
+<h2>音感ゲーム</h2>
+
+<div id="setup">
+  問題数：
+  <select id="questionCount">
+    <option>20</option>
+    <option>30</option>
+    <option>40</option>
+    <option>50</option>
+  </select>
+  <br><br>
+  <button id="startGame">ゲーム開始</button>
+</div>
+
+<div id="game" style="display:none;">
+  <div>
+    <button id="baseC">基準音 C4</button>
+    <button id="playQuestion">出題</button>
+    <button id="replay">再確認</button>
+  </div>
+
+  <div class="note-buttons" id="answerButtons"></div>
+
+  <div id="status"></div>
+  <div id="progress"></div>
+
+  <hr style="max-width:520px;margin:14px auto;">
+
+  <!-- 鍵盤 -->
+  <div id="keyboardWrap">
+    <div id="keyboard">
+      <div class="white-keys"></div>
+      <div class="black-keys"></div>
+    </div>
+  </div>
+</div>
+
+<div id="result" style="display:none;">
+  <h3>結果</h3>
+  <div id="summary"></div>
+  <hr>
+  <div id="resultList"></div>
+  <br>
+  <button id="reviewBtn" style="display:none;">間違えた音を復習</button>
+  <button id="retry">最初からやり直す</button>
+</div>
+
+<script>
+/* ===== Audio ===== */
+let audioCtx = null;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+/* ===== Piano-like sound ===== */
+function playPiano(freq) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.9, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.3, now + 0.08);
+  gain.gain.exponentialRampToValueAtTime(0.0008, now + 1.6);
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.value = Math.min(12000, freq * 16);
+  filter.Q.value = 0.7;
+
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  const partials = [
+    { m: 1, a: 1.00 },
+    { m: 2, a: 0.45 },
+    { m: 3, a: 0.25 },
+    { m: 4, a: 0.15 },
+    { m: 5, a: 0.10 }
+  ];
+
+  partials.forEach(p => {
+    const osc = audioCtx.createOscillator();
+    const og  = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq * p.m;
+
+    og.gain.setValueAtTime(0.0001, now);
+    og.gain.exponentialRampToValueAtTime(p.a, now + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + 1.4);
+
+    osc.connect(og);
+    og.connect(filter);
+
+    osc.start(now);
+    osc.stop(now + 1.6);
+  });
+
+  const noiseBuffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.04, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = noiseBuffer;
+
+  const ng = audioCtx.createGain();
+  ng.gain.setValueAtTime(0.0001, now);
+  ng.gain.exponentialRampToValueAtTime(0.2, now + 0.002);
+  ng.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+
+  const nFilter = audioCtx.createBiquadFilter();
+  nFilter.type = "bandpass";
+  nFilter.frequency.value = Math.min(6000, freq * 6);
+  nFilter.Q.value = 1;
+
+  noise.connect(ng);
+  ng.connect(nFilter);
+  nFilter.connect(filter);
+
+  noise.start(now);
+  noise.stop(now + 0.05);
+}
+
+/* ===== Notes ===== */
+const notes = [
+  {name:"C3", freq:130.81}, {name:"D3", freq:146.83}, {name:"E3", freq:164.81},
+  {name:"F3", freq:174.61}, {name:"G3", freq:196.00}, {name:"A3", freq:220.00}, {name:"B3", freq:246.94},
+  {name:"C4", freq:261.63}, {name:"D4", freq:293.66}, {name:"E4", freq:329.63},
+  {name:"F4", freq:349.23}, {name:"G4", freq:392.00}, {name:"A4", freq:440.00}, {name:"B4", freq:493.88},
+  {name:"C5", freq:523.25}
+];
+
+/* ===== State ===== */
+let questionPool = [];
+let currentIndex = 0;
+let currentNote = null;
+let history = [];
+let isReviewMode = false;
+
+/* ===== Elements ===== */
+const setup = document.getElementById("setup");
+const game = document.getElementById("game");
+const result = document.getElementById("result");
+const status = document.getElementById("status");
+const progress = document.getElementById("progress");
+
+/* ===== Events ===== */
+document.getElementById("startGame").addEventListener("pointerdown", () => {
+  initAudio();
+  const count = Number(document.getElementById("questionCount").value);
+  questionPool = Array.from({ length: count }, () =>
+    notes[Math.floor(Math.random() * notes.length)]
+  );
+  startSession(false);
+});
+
+document.getElementById("baseC").addEventListener("pointerdown", () => {
+  initAudio();
+  playPiano(261.63);
+});
+
+document.getElementById("playQuestion").addEventListener("pointerdown", () => {
+  currentNote = questionPool[currentIndex];
+  playPiano(currentNote.freq);
+  status.textContent = "";
+});
+
+document.getElementById("replay").addEventListener("pointerdown", () => {
+  if (currentNote) playPiano(currentNote.freq);
+});
+
+/* ===== Answer Buttons ===== */
+const btnArea = document.getElementById("answerButtons");
+notes.forEach(note => {
+  const btn = document.createElement("button");
+  btn.textContent = note.name;
+  btn.addEventListener("pointerdown", () => {
+    if (!currentNote) return;
+
+    const correct = note.name === currentNote.name;
+    history.push({ q: currentIndex + 1, correct, right: currentNote });
+
+    status.textContent = correct
+      ? `正解！ ${currentNote.name}`
+      : `不正解！答えは ${currentNote.name}`;
+
+    currentIndex++;
+    updateProgress();
+
+    if (currentIndex >= questionPool.length) endGame();
+  });
+  btnArea.appendChild(btn);
+});
+
+function updateProgress() {
+  progress.textContent = `進捗：${currentIndex} / ${questionPool.length}`;
+}
+
+/* ===== Session ===== */
+function startSession(review) {
+  isReviewMode = review;
+  currentIndex = 0;
+  history = [];
+  currentNote = null;
+  setup.style.display = "none";
+  result.style.display = "none";
+  game.style.display = "block";
+  updateProgress();
+}
+
+function endGame() {
+  game.style.display = "none";
+  result.style.display = "block";
+
+  const correctCount = history.filter(h => h.correct).length;
+  const rate = Math.round(correctCount / history.length * 100);
+
+  document.getElementById("summary").textContent =
+    `正解率：${rate}%（${correctCount}/${history.length}）`;
+
+  const list = document.getElementById("resultList");
+  list.innerHTML = "";
+
+  history.forEach(h => {
+    const div = document.createElement("div");
+    div.textContent = `Q${h.q}：${h.correct ? "○" : "×"}　正解：${h.right.name}`;
+    list.appendChild(div);
+  });
+
+  const wrongNotes = history.filter(h => !h.correct).map(h => h.right);
+  const reviewBtn = document.getElementById("reviewBtn");
+
+  if (!isReviewMode && wrongNotes.length > 0) {
+    reviewBtn.style.display = "inline-block";
+    reviewBtn.onclick = () => {
+      questionPool = wrongNotes;
+      startSession(true);
+    };
+  } else {
+    reviewBtn.style.display = "none";
+  }
+}
+
+document.getElementById("retry").addEventListener("pointerdown", () => {
+  setup.style.display = "block";
+  result.style.display = "none";
+});
+
+/* ===== Keyboard build (C3–C5) ===== */
+(function buildKeyboard(){
+  const WHITE_W = 60;
+
+  const whiteKeys = [
+    "C3","D3","E3","F3","G3","A3","B3",
+    "C4","D4","E4","F4","G4","A4","B4",
+    "C5"
+  ];
+
+  const blackKeys = [
+    { name:"C#3", after:0 },
+    { name:"D#3", after:1 },
+    { name:"F#3", after:3 },
+    { name:"G#3", after:4 },
+    { name:"A#3", after:5 },
+    { name:"C#4", after:7 },
+    { name:"D#4", after:8 },
+    { name:"F#4", after:10 },
+    { name:"G#4", after:11 },
+    { name:"A#4", after:12 }
+  ];
+
+  const whiteArea = document.querySelector(".white-keys");
+  const blackArea = document.querySelector(".black-keys");
+  whiteArea.innerHTML = "";
+  blackArea.innerHTML = "";
+
+  // 白鍵
+  whiteKeys.forEach(name => {
+    const n = notes.find(x => x.name === name);
+    if (!n) return;
+
+    const btn = document.createElement("button");
+    btn.title = name;
+    btn.addEventListener("pointerdown", () => {
+      initAudio();
+      playPiano(n.freq);
+    });
+    whiteArea.appendChild(btn);
+  });
+
+  // 黒鍵：境界線に置いて中央揃え
+  blackKeys.forEach(k => {
+    const baseName = k.name.replace("#", "");
+    const base = notes.find(n => n.name === baseName);
+    if (!base) return;
+
+    const freq = base.freq * Math.pow(2, 1/12);
+
+    const btn = document.createElement("button");
+    btn.title = k.name;
+
+    // 境界線位置に置いて transform でセンター合わせ
+    btn.style.left = ((k.after + 1) * WHITE_W) + "px";
+    btn.style.transform = "translateX(-50%)";
+
+    btn.addEventListener("pointerdown", () => {
+      initAudio();
+      playPiano(freq);
+    });
+
+    blackArea.appendChild(btn);
+  });
+})();
+</script>
+
+</body>
+</html>
