@@ -34,6 +34,7 @@
   #status {
     margin-top: 12px;
     font-weight: bold;
+    white-space: pre-line; /* ★追加：改行表示 */
   }
   #resultList {
     text-align: left;
@@ -122,7 +123,7 @@
     <button id="baseC">基準音 C4</button>
     <button id="playQuestion">出題</button>
     <button id="replay">再確認</button>
-    <!-- ★追加：全問終了後に押して結果表示 -->
+    <!-- ★全問終了後に押して結果表示 -->
     <button id="showResult" style="display:none;" disabled>結果</button>
   </div>
 
@@ -246,7 +247,7 @@ let currentIndex = 0;
 let currentNote = null;
 let history = [];
 let isReviewMode = false;
-let isFinished = false;   // ★追加：全問終了フラグ
+let isFinished = false;
 
 /* ===== Elements ===== */
 const setup = document.getElementById("setup");
@@ -293,7 +294,7 @@ showResultBtn.addEventListener("pointerdown", () => {
 
 /* ===== Answer Buttons ===== */
 const btnArea = document.getElementById("answerButtons");
-const answerButtons = []; // ★追加：まとめてdisableできるように
+const answerButtons = [];
 
 notes.forEach(note => {
   const btn = document.createElement("button");
@@ -306,6 +307,7 @@ notes.forEach(note => {
     const correct = note.name === currentNote.name;
     history.push({ q: currentIndex + 1, correct, right: currentNote });
 
+    // まず最終問でも必ず正誤を表示
     status.textContent = correct
       ? `正解！ ${currentNote.name}`
       : `不正解！答えは ${currentNote.name}`;
@@ -313,9 +315,9 @@ notes.forEach(note => {
     currentIndex++;
     updateProgress();
 
-    // ★変更：最後でも即結果画面へ行かない
+    // ★最後でも即結果画面へ行かない
     if (currentIndex >= questionPool.length) {
-      finishGameFlow();
+      finishGameFlow(); // ←ここで status を上書きしないのが重要
     } else {
       currentNote = null; // 次は「出題」を押すまで未出題状態に
     }
@@ -371,7 +373,11 @@ function finishGameFlow() {
   showResultBtn.style.display = "inline-block";
   showResultBtn.disabled = false;
 
-  status.textContent = "全問終了！「結果」を押してね。";
+  // ★ここが修正点：最終問の正誤表示を消さずに案内を追記
+  const finishMsg = "全問終了！「結果」を押してね。";
+  status.textContent = status.textContent
+    ? `${status.textContent}\n${finishMsg}`
+    : finishMsg;
 }
 
 function endGame() {
