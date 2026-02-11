@@ -25,6 +25,9 @@
     background: #000;
     color: #fff;
   }
+  button:disabled {
+    opacity: 0.5;
+  }
   .note-buttons button {
     width: 60px;
   }
@@ -119,6 +122,8 @@
     <button id="baseC">基準音 C4</button>
     <button id="playQuestion">出題</button>
     <button id="replay">再確認</button>
+    <!-- ★追加：全問終了後に押して結果表示 -->
+    <button id="showResult" style="display:none;" disabled>結果</button>
   </div>
 
   <div class="note-buttons" id="answerButtons"></div>
@@ -241,6 +246,7 @@ let currentIndex = 0;
 let currentNote = null;
 let history = [];
 let isReviewMode = false;
+let isFinished = false;   // ★追加：全問終了フラグ
 
 /* ===== Elements ===== */
 const setup = document.getElementById("setup");
@@ -248,6 +254,9 @@ const game = document.getElementById("game");
 const result = document.getElementById("result");
 const status = document.getElementById("status");
 const progress = document.getElementById("progress");
+const showResultBtn = document.getElementById("showResult");
+const playQuestionBtn = document.getElementById("playQuestion");
+const replayBtn = document.getElementById("replay");
 
 /* ===== Events ===== */
 document.getElementById("startGame").addEventListener("pointerdown", () => {
@@ -264,22 +273,34 @@ document.getElementById("baseC").addEventListener("pointerdown", () => {
   playPiano(261.63);
 });
 
-document.getElementById("playQuestion").addEventListener("pointerdown", () => {
+playQuestionBtn.addEventListener("pointerdown", () => {
+  if (isFinished) return;
   currentNote = questionPool[currentIndex];
   playPiano(currentNote.freq);
   status.textContent = "";
 });
 
-document.getElementById("replay").addEventListener("pointerdown", () => {
+replayBtn.addEventListener("pointerdown", () => {
+  if (isFinished) return;
   if (currentNote) playPiano(currentNote.freq);
+});
+
+/* ===== 「結果」ボタン：全問終了後に押したら結果表示 ===== */
+showResultBtn.addEventListener("pointerdown", () => {
+  if (!isFinished) return;
+  endGame();
 });
 
 /* ===== Answer Buttons ===== */
 const btnArea = document.getElementById("answerButtons");
+const answerButtons = []; // ★追加：まとめてdisableできるように
+
 notes.forEach(note => {
   const btn = document.createElement("button");
   btn.textContent = note.name;
+
   btn.addEventListener("pointerdown", () => {
+    if (isFinished) return;
     if (!currentNote) return;
 
     const correct = note.name === currentNote.name;
@@ -292,10 +313,21 @@ notes.forEach(note => {
     currentIndex++;
     updateProgress();
 
-    if (currentIndex >= questionPool.length) endGame();
+    // ★変更：最後でも即結果画面へ行かない
+    if (currentIndex >= questionPool.length) {
+      finishGameFlow();
+    } else {
+      currentNote = null; // 次は「出題」を押すまで未出題状態に
+    }
   });
+
   btnArea.appendChild(btn);
+  answerButtons.push(btn);
 });
+
+function setAnswerButtonsEnabled(enabled) {
+  answerButtons.forEach(b => b.disabled = !enabled);
+}
 
 function updateProgress() {
   progress.textContent = `進捗：${currentIndex} / ${questionPool.length}`;
@@ -304,13 +336,42 @@ function updateProgress() {
 /* ===== Session ===== */
 function startSession(review) {
   isReviewMode = review;
+
+  // ★リセット（前回の痕跡を残さない）
   currentIndex = 0;
   history = [];
   currentNote = null;
+  isFinished = false;
+  status.textContent = "";
+  progress.textContent = "";
+  showResultBtn.style.display = "none";
+  showResultBtn.disabled = true;
+
+  // ボタン類を通常状態へ
+  playQuestionBtn.disabled = false;
+  replayBtn.disabled = false;
+  setAnswerButtonsEnabled(true);
+
   setup.style.display = "none";
   result.style.display = "none";
   game.style.display = "block";
   updateProgress();
+}
+
+function finishGameFlow() {
+  isFinished = true;
+  currentNote = null;
+
+  // ゲーム操作を止める（結果を見るだけ）
+  playQuestionBtn.disabled = true;
+  replayBtn.disabled = true;
+  setAnswerButtonsEnabled(false);
+
+  // 結果ボタンを出す
+  showResultBtn.style.display = "inline-block";
+  showResultBtn.disabled = false;
+
+  status.textContent = "全問終了！「結果」を押してね。";
 }
 
 function endGame() {
@@ -318,7 +379,7 @@ function endGame() {
   result.style.display = "block";
 
   const correctCount = history.filter(h => h.correct).length;
-  const rate = Math.round(correctCount / history.length * 100);
+  const rate = history.length ? Math.round(correctCount / history.length * 100) : 0;
 
   document.getElementById("summary").textContent =
     `正解率：${rate}%（${correctCount}/${history.length}）`;
